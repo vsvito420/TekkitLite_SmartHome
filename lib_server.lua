@@ -170,6 +170,67 @@ function Server.new(net, storage, config, logger)
             wakeAt = math.min(wakeAt or deadline, deadline)
         end
     end
+    -- v49 Net Scope: bounded runtime summaries of SmartHome packets seen by the
+    -- OS modem. Nothing is recorded or saved unless an app enables capture.
+    local packets = {entries = {}, total = 0, limit = 200, skip = {}}
+    local envelope = {protocol = true, networkId = true, sender = true, recipient = true, type = true,
+        clientId = true, _transport = true, _route = true}
+    local function packetInfo(packet)
+        local keys, parts = {}, {}
+        for key in pairs(packet) do
+            if type(key) == "string" and not envelope[key] then keys[#keys + 1] = key end
+        end
+        table.sort(keys)
+        for index = 1, math.min(#keys, 16) do
+            local value = packet[keys[index]]
+            local kind = type(value)
+            if kind == "table" then
+                local count = 0
+                for _ in pairs(value) do count = count + 1; if count >= 999 then break end end
+                value = "{" .. count .. "}"
+            elseif kind == "string" then value = #value > 40 and (value:sub(1, 37) .. "...") or value
+            else value = tostring(value) end
+            parts[#parts + 1] = keys[index] .. "=" .. value:gsub("[%c]", " ")
+        end
+        if #keys > 16 then parts[#parts + 1] = "+" .. (#keys - 16) .. " more" end
+        return parts
+    end
+    local function tapPacket(direction, packet, channel, bytes, accepted)
+        if packet and packets.skip[packet.type] then return end
+        packets.total = packets.total + 1
+        local entry = {n = packets.total, at = os.clock(), direction = direction, channel = channel, bytes = bytes,
+            status = not packet and "foreign" or accepted and "ok" or "ignored"}
+        if packet then
+            local transport = type(packet._transport) == "table" and packet._transport or nil
+            entry.type, entry.sender, entry.recipient = tostring(packet.type), packet.sender, packet.recipient
+            entry.clientId = type(packet.clientId) == "string" and packet.clientId:sub(1, 64) or nil
+            entry.hops = transport and type(transport.path) == "table" and #transport.path or 0
+            entry.sequence = transport and transport.sequence or nil
+            entry.info = packetInfo(packet)
+        end
+        local entries = packets.entries
+        entries[#entries + 1] = entry
+        if #entries > packets.limit then table.remove(entries, 1) end
+        Work.check(64)
+    end
+    -- skipTypes is an optional set such as {render = true}; skipped packet
+    -- types never enter the log, so a viewer cannot feed on its own redraws.
+    function api.capturePackets(enabled, skipTypes)
+        packets.skip = {}
+        if type(skipTypes) == "table" then
+            for kind, skipped in pairs(skipTypes) do
+                if type(kind) == "string" and skipped == true then packets.skip[kind] = true end
+            end
+        end
+        net.tap = enabled == true and tapPacket or nil
+        return net.tap ~= nil
+    end
+    function api.getPacketLog()
+        local result = {}
+        for index, entry in ipairs(packets.entries) do result[index] = entry end
+        return result, packets.total, net.tap ~= nil
+    end
+    function api.clearPacketLog() packets.entries = {} end
     function api.clientName(id) return type(state.clientNames[id]) == "string" and state.clientNames[id] or id end
     local function definition(name) return server.systemApps[name] or server.apps[name] end
     local function invalidateInput(id)

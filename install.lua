@@ -1,9 +1,12 @@
--- SmartHome OS installer: bundled-v48
+-- SmartHome OS installer: bundled-v49
 -- Flat-root layout: lib_*, clients_*, apps_*, configs_*.
 -- Upload this ONE file to Pastebin. All role files are included below.
 -- Usage: inst server|io|monitor|sensor|relay [--startup]
+-- Everything at once on the OS computer: inst server --startup --apps
+-- App store: inst store | inst list | inst apps [NAME ...] | inst remove NAME
 -- User apps: inst app NAME [--ref BRANCH_OR_COMMIT] (GitHub)
 -- Alternatives: inst app NAME PASTE_ID   or   inst app NAME --file PATH
+-- Pastebin sharing: inst share NAME | inst backup [--apps] | inst restore PASTE_ID
 -- OS/client installation is offline. Apps are fetched only on request.
 local sources = {
     ["lib_work.lua"] = [=[-- Cooperative central work, portable to Lua 5.1 and legacy LuaJ.
@@ -354,6 +357,7 @@ function Network.new(config, isServer, logger)
             if config.relayEnabled ~= false then net.modem.transmit(relayChannel, net.listenChannel, raw) end
         end)
         if not ok then net.modem, net.side = nil, nil end
+        if ok and net.tap then net.tap("tx", packet, channel, #raw, true) end
         return ok
     end
 
@@ -432,8 +436,13 @@ function Network.new(config, isServer, logger)
         return packet
     end
 
+    -- Optional observer (v49 Net Scope): sees every decoded packet and whether
+    -- it was accepted. It is never called unless a viewer has attached it.
     function net.receive(side, channel, replyChannel, raw)
-        return accept(decode(side, channel, replyChannel, raw), replyChannel)
+        local packet = decode(side, channel, replyChannel, raw)
+        local accepted = accept(packet, replyChannel)
+        if net.tap then net.tap("rx", packet, channel, type(raw) == "string" and #raw or 0, accepted ~= nil) end
+        return accepted
     end
 
     function net.receiveForRelay(side, channel, replyChannel, raw)
@@ -2575,6 +2584,67 @@ function Server.new(net, storage, config, logger)
             wakeAt = math.min(wakeAt or deadline, deadline)
         end
     end
+    -- v49 Net Scope: bounded runtime summaries of SmartHome packets seen by the
+    -- OS modem. Nothing is recorded or saved unless an app enables capture.
+    local packets = {entries = {}, total = 0, limit = 200, skip = {}}
+    local envelope = {protocol = true, networkId = true, sender = true, recipient = true, type = true,
+        clientId = true, _transport = true, _route = true}
+    local function packetInfo(packet)
+        local keys, parts = {}, {}
+        for key in pairs(packet) do
+            if type(key) == "string" and not envelope[key] then keys[#keys + 1] = key end
+        end
+        table.sort(keys)
+        for index = 1, math.min(#keys, 16) do
+            local value = packet[keys[index]]
+            local kind = type(value)
+            if kind == "table" then
+                local count = 0
+                for _ in pairs(value) do count = count + 1; if count >= 999 then break end end
+                value = "{" .. count .. "}"
+            elseif kind == "string" then value = #value > 40 and (value:sub(1, 37) .. "...") or value
+            else value = tostring(value) end
+            parts[#parts + 1] = keys[index] .. "=" .. value:gsub("[%c]", " ")
+        end
+        if #keys > 16 then parts[#parts + 1] = "+" .. (#keys - 16) .. " more" end
+        return parts
+    end
+    local function tapPacket(direction, packet, channel, bytes, accepted)
+        if packet and packets.skip[packet.type] then return end
+        packets.total = packets.total + 1
+        local entry = {n = packets.total, at = os.clock(), direction = direction, channel = channel, bytes = bytes,
+            status = not packet and "foreign" or accepted and "ok" or "ignored"}
+        if packet then
+            local transport = type(packet._transport) == "table" and packet._transport or nil
+            entry.type, entry.sender, entry.recipient = tostring(packet.type), packet.sender, packet.recipient
+            entry.clientId = type(packet.clientId) == "string" and packet.clientId:sub(1, 64) or nil
+            entry.hops = transport and type(transport.path) == "table" and #transport.path or 0
+            entry.sequence = transport and transport.sequence or nil
+            entry.info = packetInfo(packet)
+        end
+        local entries = packets.entries
+        entries[#entries + 1] = entry
+        if #entries > packets.limit then table.remove(entries, 1) end
+        Work.check(64)
+    end
+    -- skipTypes is an optional set such as {render = true}; skipped packet
+    -- types never enter the log, so a viewer cannot feed on its own redraws.
+    function api.capturePackets(enabled, skipTypes)
+        packets.skip = {}
+        if type(skipTypes) == "table" then
+            for kind, skipped in pairs(skipTypes) do
+                if type(kind) == "string" and skipped == true then packets.skip[kind] = true end
+            end
+        end
+        net.tap = enabled == true and tapPacket or nil
+        return net.tap ~= nil
+    end
+    function api.getPacketLog()
+        local result = {}
+        for index, entry in ipairs(packets.entries) do result[index] = entry end
+        return result, packets.total, net.tap ~= nil
+    end
+    function api.clearPacketLog() packets.entries = {} end
     function api.clientName(id) return type(state.clientNames[id]) == "string" and state.clientNames[id] or id end
     local function definition(name) return server.systemApps[name] or server.apps[name] end
     local function invalidateInput(id)
@@ -5536,7 +5606,7 @@ return Monitor
 -- events without running commands or changing app state during a checkpoint.
 local Console = dofile("lib_console.lua")
 local console = Console.new(term)
-console.log("SmartHome OS v48: starting")
+console.log("SmartHome OS v49: starting")
 local Work = dofile("lib_work.lua")
 -- The installer and another OS run may share CraftOS globals until reboot.
 Work.disable()
@@ -6868,120 +6938,450 @@ end)
 finish(ok, err)
 ]=],
 }
+local repo = "vsvito420/TekkitLite_SmartHome"
+local bundledCatalog = [=[{
+{name="clock",title="Clock",about="Clock, alarms, timers, stopwatch"},
+{name="coffee",title="Coffee",about="Coffee machine timer"},
+{name="io_scope",title="IO Scope",about="Redstone IO history viewer"},
+{name="logic_sandbox",title="Logic Sandbox",about="Rules and Boolean circuits"},
+{name="me_monitor",title="ME Monitor",about="AE item stock monitors"},
+{name="me_storage",title="ME Storage",about="AE storage overview"},
+{name="net_scope",title="Net Scope",about="Network packet viewer"},
+{name="notes",title="Notes",about="Notes and checklists"},
+{name="reactors",title="Reactors",about="Reactor overview and control"},
+{name="screensaver",title="Screensaver",about="Animated screensavers"},
+{name="solar_farm",title="Solar Farm",about="Solar panel production stats"},
+{name="switchboard",title="Switchboard",about="Buttons for redstone outputs"},
+{name="window_presets",title="Window Presets",about="Save and restore layouts"},
+}
+]=]
 local workChunk = assert(loadstring(sources["lib_work.lua"], "lib_work.lua"))
 setfenv(workChunk, getfenv(1))
 workChunk()
 local args = {...}
-local role, autorun = args[1], false
+local role, autorun, withApps = args[1], false, false
 local entry = {server = "main_os.lua", io = "clients_io_client.lua", monitor = "clients_monitor_client.lua", sensor = "clients_sensor_client.lua", relay = "clients_relay_client.lua"}
-print("SmartHome installer: bundled-v48")
+local commands = {app = true, apps = true, store = true, list = true, remove = true, share = true, backup = true, restore = true}
+print("SmartHome installer: bundled-v49")
+local roleUsage = "Usage: inst server|io|monitor|sensor|relay [--startup] (server also: --apps)"
 local appUsage = "Usage: inst app NAME [--ref REF] | inst app NAME PASTE_ID | inst app NAME --file PATH"
-if not entry[role] and role ~= "app" then
-    print("Usage: inst server|io|monitor|sensor|relay [--startup]")
+if not entry[role] and not commands[role] then
+    print(roleUsage)
     print(appUsage)
+    print("All apps: inst apps [NAME ...] [--ref REF]")
+    print("App store: inst store | inst list | inst remove NAME")
+    print("Pastebin: inst share NAME | inst backup [--apps] [--local]")
+    print("          inst restore PASTE_ID | inst restore --file PATH")
     return
 end
 assert(shell.dir() == "", "Run cd / first")
+
+local function loadStorage()
+    local storageChunk = assert(loadstring(sources["lib_storage.lua"], "lib_storage.lua"))
+    setfenv(storageChunk, getfenv(1))
+    return storageChunk()
+end
+local function readFile(path)
+    if not fs.exists(path) or fs.isDir(path) then return nil end
+    local file = fs.open(path, "r")
+    if not file then return nil end
+    local contents = file.readAll(); file.close()
+    return contents
+end
+-- Check every file before replacing any installed program.
+local function install(files)
+    for _, path in ipairs(files) do
+        local contents = assert(sources[path], "Missing bundled file: " .. path)
+        if path:match("%.lua$") or path == "startup" then
+            local chunk, err = loadstring(contents, path)
+            assert(chunk, "Invalid Lua: " .. path .. ": " .. tostring(err))
+        else assert(type(textutils.unserialize(contents)) == "table", "Invalid settings: " .. path) end
+    end
+    for _, path in ipairs(files) do
+        assert(not path:find("/", 1, true), "Install targets must be root filenames")
+        local file = assert(fs.open(path .. ".download", "w"), "Cannot stage " .. path)
+        file.write(sources[path])
+        file.close()
+    end
+    for _, path in ipairs(files) do
+        if fs.exists(path) then
+            if fs.exists(path .. ".pre_update") then fs.delete(path .. ".pre_update") end
+            fs.move(path, path .. ".pre_update")
+        end
+        fs.move(path .. ".download", path)
+        print("Installed " .. path)
+    end
+end
+local function validRef(ref)
+    return type(ref) == "string" and ref:match("^[%w_./-]+$") and not ref:find("..", 1, true)
+        and ref:sub(1, 1) ~= "/" and ref:sub(-1) ~= "/"
+end
+local function download(address)
+    -- A child coroutine catches native request errors without preventing
+    -- http.get from yielding on Lua 5.1. Terminate still aborts the install.
+    local request = coroutine.create(function() return http.get(address) end)
+    local result = {coroutine.resume(request)}
+    while result[1] and coroutine.status(request) ~= "dead" do
+        result = {coroutine.resume(request, os.pullEvent(result[2]))}
+    end
+    if not result[1] then return nil, "Request error: " .. tostring(result[2]) end
+    local response = result[2] or result[4] -- Newer CC may return an error handle.
+    if not response then return nil, tostring(result[3] or "No response; CC supplied no reason") end
+    -- Reading/closing response handles does not yield, unlike http.get.
+    local ok, code, body = pcall(function()
+        return response.getResponseCode and response.getResponseCode() or 200, response.readAll()
+    end)
+    local closed, closeError = pcall(response.close)
+    if not ok then return nil, "Cannot read response: " .. tostring(code) end
+    if not closed then return nil, "Cannot close response: " .. tostring(closeError) end
+    if code ~= 200 then return nil, "GitHub returned HTTP " .. tostring(code) end
+    if not result[2] then return nil, tostring(result[3] or "HTTP request failed") end
+    if type(body) ~= "string" or #body == 0 then return nil, "Empty app source" end
+    return body
+end
+local function checkLua(body, path)
+    if body == nil then return nil end
+    local chunk, err = loadstring(body, path)
+    if not chunk then return nil, "Invalid app Lua: " .. tostring(err) end
+    return body
+end
+local function apiSource(body, path)
+    -- Read only GitHub's known base64 content field; no JSON API or
+    -- execution of downloaded text is needed on old ComputerCraft.
+    if not body:match('"type"%s*:%s*"file"') or not body:match('"encoding"%s*:%s*"base64"')
+        or body:match('"name"%s*:%s*"([^"]*)"') ~= path then
+        return nil, "GitHub API did not return the requested base64 file"
+    end
+    local encoded = body:match('"content"%s*:%s*"([^"]*)"')
+    if not encoded then return nil, "GitHub API response has no file content" end
+    encoded = encoded:gsub("\\n", ""):gsub("\\r", ""):gsub("\\/", "/"):gsub("%s", "")
+    local padding = encoded:match("=*$")
+    local data = encoded:sub(1, #encoded - #padding)
+    if #encoded % 4 ~= 0 or #padding > 2 or data:find("[^A-Za-z0-9+/]") then
+        return nil, "Invalid base64 in GitHub API response"
+    end
+    local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    local output, value, bits = {}, 0, 0
+    for index = 1, #data do
+        value, bits = value * 64 + alphabet:find(data:sub(index, index), 1, true) - 1, bits + 6
+        if bits >= 8 then
+            bits = bits - 8
+            output[#output + 1] = string.char(math.floor(value / 2 ^ bits))
+            value = value % 2 ^ bits
+        end
+    end
+    local decoded = table.concat(output)
+    if value ~= 0 or tonumber(body:match('"size"%s*:%s*(%d+)')) ~= #decoded then
+        return nil, "GitHub API file size/encoding mismatch"
+    end
+    if #decoded == 0 then return nil, "Empty app source" end
+    return decoded
+end
+-- Never throws: returns contents, or nil plus the API and raw reasons. This
+-- keeps http.get free to yield and lets a multi-app install skip one failure.
+local function fetchRepo(path, ref, check, quiet)
+    if not (http and type(http.get) == "function") then
+        return nil, "HTTP is disabled; GitHub app downloads need HTTP enabled"
+    end
+    local say = quiet and function() end or print
+    local url = "https://raw.githubusercontent.com/" .. repo .. "/" .. ref .. "/" .. path
+    local apiUrl = "https://api.github.com/repos/" .. repo .. "/contents/" .. path .. "?ref=" .. ref
+    say("Downloading " .. path .. " from GitHub (" .. ref .. ")")
+    local contents, rawError
+    local body, apiError = download(apiUrl)
+    if body then contents, apiError = apiSource(body, path) end
+    if contents and check then contents, apiError = check(contents, path) end
+    if contents then say("Downloaded via GitHub API"); return contents end
+    say("GitHub API failed; trying raw download")
+    contents, rawError = download(url)
+    if contents and check then contents, rawError = check(contents, path) end
+    if contents then say("Downloaded via GitHub raw"); return contents end
+    return nil, "Raw: " .. tostring(rawError), "API: " .. tostring(apiError)
+end
+local function validCatalog(value)
+    if type(value) ~= "table" then return nil end
+    local result, seen = {}, {}
+    for _, item in ipairs(value) do
+        if type(item) == "table" and type(item.name) == "string" and item.name:match("^[%w_-]+$")
+            and #item.name <= 32 and not seen[item.name] and item.name ~= "system" and item.name ~= "level_emitter" then
+            seen[item.name] = true
+            result[#result + 1] = {name = item.name,
+                title = type(item.title) == "string" and item.title:gsub("[%c]", " "):sub(1, 24) or item.name,
+                about = type(item.about) == "string" and item.about:gsub("[%c]", " "):sub(1, 60) or ""}
+        end
+    end
+    return #result > 0 and result or nil
+end
+-- Old CraftOS returns the input string or throws for text that is not a table.
+local function parseTable(text)
+    local ok, value = pcall(textutils.unserialize, text)
+    return ok and type(value) == "table" and value or nil
+end
+-- The bundled list always works offline; GitHub may know newer apps.
+local function loadCatalog(ref)
+    local text = fetchRepo("apps_catalog.txt", ref, nil, true)
+    local online = text and validCatalog(parseTable(text))
+    if online then return online, true end
+    return assert(validCatalog(parseTable(bundledCatalog)), "Invalid bundled app catalog"), false
+end
+local function requireServer()
+    assert(fs.exists("main_os.lua") and fs.exists("lib_server.lua"), "Install apps on the central OS computer")
+end
+local function readSettings()
+    local storage = loadStorage()
+    local configPath = "configs_os.txt"
+    local settings = storage.load(configPath)
+    if not settings then
+        for _, suffix in ipairs({"", ".tmp", ".bak"}) do
+            assert(not fs.exists(configPath .. suffix), "Unreadable OS settings")
+        end
+        settings = {}
+    end
+    if settings.enabledApps == nil then settings.enabledApps = {} end
+    assert(type(settings.enabledApps) == "table", "Invalid enabledApps setting")
+    return settings, configPath
+end
+local function appName(name)
+    name = type(name) == "string" and name:lower() or name
+    assert(type(name) == "string" and name:match("^[%w_-]+$"), "Specify a simple app name without .lua")
+    assert(name ~= "system", "System Overview is built into Settings")
+    assert(name ~= "level_emitter", "Level Emitter has been retired. Use Logic Sandbox for item rules.")
+    return name
+end
+-- Download and install several apps one at a time, so a single failure or a
+-- full disk never blocks the others. Settings are written once at the end.
+local function installApps(names, ref)
+    requireServer()
+    assert(http and type(http.get) == "function", "HTTP is disabled; GitHub app downloads need HTTP enabled")
+    local settings, configPath = readSettings()
+    local done, same, failed = {}, {}, {}
+    for index, name in ipairs(names) do
+        local path = "apps_" .. name .. ".lua"
+        print("[" .. index .. "/" .. #names .. "] " .. name)
+        local contents, rawError, apiError = fetchRepo(path, ref, checkLua, true)
+        if not contents then
+            failed[#failed + 1] = name
+            print("  FAILED " .. tostring(rawError))
+            if apiError then print("  " .. apiError) end
+        elseif contents == readFile(path) then
+            same[#same + 1] = name
+            settings.enabledApps[name] = true
+            print("  already up to date")
+        else
+            if fs.getFreeSpace and fs.exists(path .. ".pre_update") and fs.getFreeSpace("") < #contents + 4096 then
+                fs.delete(path .. ".pre_update")
+            end
+            if fs.getFreeSpace and fs.getFreeSpace("") < #contents + 4096 then
+                failed[#failed + 1] = name
+                print("  FAILED: disk full (" .. #contents .. " bytes needed)")
+            else
+                sources[path] = contents
+                install({path})
+                sources[path] = nil
+                settings.enabledApps[name] = true
+                done[#done + 1] = name
+            end
+        end
+    end
+    if #done + #same > 0 then
+        local text = textutils.serialize(settings)
+        if text ~= readFile(configPath) then
+            sources[configPath] = text
+            install({configPath})
+        end
+    end
+    print("Apps installed: " .. #done .. ", unchanged: " .. #same .. ", failed: " .. #failed)
+    if #failed > 0 then print("Retry with: inst apps " .. table.concat(failed, " ")) end
+    if #done > 0 then print("Restart the central OS to load them") end
+    return #failed == 0
+end
+local function printCatalog(catalog)
+    local width = term.getSize()
+    for index, item in ipairs(catalog) do
+        local mark = fs.exists("apps_" .. item.name .. ".lua") and "[x]" or "[ ]"
+        local line = string.format("%2d %s %s", index, mark, item.name)
+        if item.about ~= "" then line = line .. string.rep(" ", math.max(1, 21 - #line)) .. item.about end
+        print(line:sub(1, width))
+    end
+end
+local function pastebinPut(path)
+    assert(http, "HTTP is disabled; Pastebin needs HTTP enabled")
+    print("Uploading " .. path .. " to Pastebin...")
+    assert(shell.run("pastebin", "put", path), "Pastebin upload failed")
+end
+
 local files
-if role == "app" then
+if role == "apps" or role == "store" or role == "list" then
+    local ref, names = "main", {}
+    local index = 2
+    while args[index] do
+        if args[index] == "--ref" then ref, index = args[index + 1], index + 1
+        else names[#names + 1] = appName(args[index]) end
+        index = index + 1
+    end
+    assert(validRef(ref), "Invalid GitHub branch or commit")
+    assert(role == "apps" or #names == 0, "Usage: inst " .. role .. " [--ref REF]")
+    if role ~= "list" then requireServer() end
+    if role == "apps" and #names > 0 then installApps(names, ref); return end
+    local catalog, online = loadCatalog(ref)
+    print("App catalog: " .. repo .. (online and "" or " (bundled list)"))
+    if role == "apps" then
+        for _, item in ipairs(catalog) do names[#names + 1] = item.name end
+        installApps(names, ref)
+        return
+    end
+    printCatalog(catalog)
+    if role == "list" then print("[x] = installed. Install: inst store, inst apps or inst app NAME"); return end
+    print("Numbers (e.g. 1 3 5), all, new (missing only); empty = quit")
+    write("> ")
+    local answer = read():lower()
+    local chosen = {}
+    for word in answer:gmatch("%S+") do
+        if word == "all" or word == "new" then
+            for _, item in ipairs(catalog) do
+                if word == "all" or not fs.exists("apps_" .. item.name .. ".lua") then chosen[item.name] = true end
+            end
+        else
+            local item = catalog[tonumber(word)]
+            for _, known in ipairs(catalog) do if known.name == word then item = known end end
+            assert(item, "Unknown app: " .. word)
+            chosen[item.name] = true
+        end
+    end
+    for _, item in ipairs(catalog) do if chosen[item.name] then names[#names + 1] = item.name end end
+    if #names == 0 then print("Nothing selected"); return end
+    installApps(names, ref)
+    return
+elseif role == "remove" then
+    local name = appName(args[2])
+    assert(not args[3], "Usage: inst remove NAME")
+    requireServer()
+    local settings, configPath = readSettings()
+    local path = "apps_" .. name .. ".lua"
+    assert(fs.exists(path) or settings.enabledApps[name], "App is not installed: " .. name)
+    settings.enabledApps[name] = nil
+    sources[configPath] = textutils.serialize(settings)
+    install({configPath})
+    if fs.exists(path) then
+        if fs.exists(path .. ".pre_update") then fs.delete(path .. ".pre_update") end
+        fs.move(path, path .. ".pre_update")
+    end
+    print("Removed app " .. name .. "; its saved data is kept. Code moved to " .. path .. ".pre_update")
+    print("Restart the central OS")
+    return
+elseif role == "share" then
+    local name = appName(args[2])
+    assert(not args[3], "Usage: inst share NAME")
+    local path = "apps_" .. name .. ".lua"
+    assert(fs.exists(path), "App is not installed here: " .. name)
+    pastebinPut(path)
+    print("Install it elsewhere with: inst app " .. name .. " CODE")
+    return
+elseif role == "backup" then
+    local includeApps, upload = false, true
+    for index = 2, #args do
+        if args[index] == "--apps" then includeApps = true
+        elseif args[index] == "--local" then upload = false
+        else error("Usage: inst backup [--apps] [--local]", 0) end
+    end
+    local backup = {format = "SmartHomeBackup/1", computerId = os.getComputerID(), files = {}, apps = {}}
+    local count, bytes = 0, 0
+    for _, path in ipairs(fs.list("")) do
+        local app = path:match("^apps_([%w_-]+)%.lua$")
+        -- The transport boot counter must keep counting upwards on this computer.
+        local config = path:match("^configs_[%w_]+%.txt$") and path ~= "configs_transport.txt"
+        if not fs.isDir(path) and (config or app) then
+            if app then backup.apps[#backup.apps + 1] = app end
+            if config or includeApps then
+                local contents = assert(readFile(path), "Cannot read " .. path)
+                backup.files[path] = contents
+                count, bytes = count + 1, bytes + #contents
+            end
+        end
+    end
+    assert(count > 0 or #backup.apps > 0, "Nothing to back up on this computer")
+    table.sort(backup.apps)
+    local target = "smarthome_backup.txt"
+    local file = assert(fs.open(target .. ".download", "w"), "Cannot write " .. target)
+    file.write(textutils.serialize(backup)); file.close()
+    if fs.exists(target) then fs.delete(target) end
+    fs.move(target .. ".download", target)
+    print("Saved " .. count .. " files (" .. bytes .. " bytes) to /" .. target)
+    if not includeApps and #backup.apps > 0 then
+        print(#backup.apps .. " app names noted; restore reloads them from GitHub")
+    end
+    if upload then
+        if bytes > 480000 then print("Too large for Pastebin (512 KB); leave out --apps"); return end
+        print("Note: anyone with the code can read this paste")
+        pastebinPut(target)
+        print("Restore with: inst restore CODE")
+    else print("Share later with: pastebin put " .. target) end
+    return
+elseif role == "restore" then
+    local source = args[2]
+    assert(source and (source == "--file" and args[3] and not args[4] or source:match("^%w+$") and not args[3]),
+        "Usage: inst restore PASTE_ID | inst restore --file PATH")
+    local path = source == "--file" and args[3] or "smarthome_backup.download"
+    if source ~= "--file" then
+        if fs.exists(path) then fs.delete(path) end
+        assert(shell.run("pastebin", "get", source, path) and fs.exists(path), "Pastebin backup download failed")
+    end
+    local text = assert(readFile(path), "Cannot read backup: " .. path)
+    if source ~= "--file" then fs.delete(path) end
+    local backup = parseTable(text)
+    assert(backup and backup.format == "SmartHomeBackup/1" and type(backup.files) == "table",
+        "Not a SmartHome backup")
+    files = {}
+    local included = {}
+    for name, contents in pairs(backup.files) do
+        local app = type(name) == "string" and name:match("^apps_([%w_-]+)%.lua$")
+        assert(type(name) == "string" and type(contents) == "string" and name ~= "configs_transport.txt"
+            and (app or name:match("^configs_[%w_]+%.txt$")), "Unexpected file in backup: " .. tostring(name))
+        if app then included[app] = true end
+        sources[name] = contents
+        files[#files + 1] = name
+    end
+    table.sort(files)
+    install(files)
+    print("Restored " .. #files .. " files; replaced files are kept as *.pre_update")
+    local missing = {}
+    for _, name in ipairs(type(backup.apps) == "table" and backup.apps or {}) do
+        if type(name) == "string" and name:match("^[%w_-]+$") and not included[name]
+            and not fs.exists("apps_" .. name .. ".lua") and name ~= "level_emitter" and name ~= "system" then
+            missing[#missing + 1] = name
+        end
+    end
+    if #missing > 0 then
+        if fs.exists("main_os.lua") and http and type(http.get) == "function" then
+            print("Reloading " .. #missing .. " apps from GitHub")
+            installApps(missing, "main")
+        else print("Apps still missing: inst apps " .. table.concat(missing, " ")) end
+    end
+    print("Run reboot to use the restored data")
+    return
+elseif role == "app" then
     local name, source = args[2], args[3]
     assert(type(name) == "string" and name:match("^[%w_-]+$"), "Specify a simple app name without .lua")
     assert(not source and not args[4]
         or (source == "--file" or source == "--ref") and args[4] and not args[5]
         or source and source:match("^%w+$") and not args[4], appUsage)
-    assert(name ~= "system", "System Overview is built into Settings")
-    assert(name ~= "level_emitter", "Level Emitter has been retired. Use Logic Sandbox for item rules.")
+    name = appName(name)
+    args[2] = name
     local github = source == nil or source == "--ref"
     local ref = source == "--ref" and args[4] or "main"
-    assert(not github or ref:match("^[%w_./-]+$") and not ref:find("..", 1, true)
-        and ref:sub(1, 1) ~= "/" and ref:sub(-1) ~= "/", "Invalid GitHub branch or commit")
-    assert(fs.exists("main_os.lua") and fs.exists("lib_server.lua"), "Install apps on the central OS computer")
+    assert(not github or validRef(ref), "Invalid GitHub branch or commit")
+    requireServer()
     local path = "apps_" .. name .. ".lua"
     local contents
     if github then
         assert(http and type(http.get) == "function", "HTTP is disabled; GitHub app downloads need HTTP enabled")
-        local url = "https://raw.githubusercontent.com/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/" .. ref .. "/" .. path
-        print("Downloading " .. path .. " from GitHub (" .. ref .. ")")
-        local function download(address)
-            -- A child coroutine catches native request errors without preventing
-            -- http.get from yielding on Lua 5.1. Terminate still aborts the install.
-            local request = coroutine.create(function() return http.get(address) end)
-            local result = {coroutine.resume(request)}
-            while result[1] and coroutine.status(request) ~= "dead" do
-                result = {coroutine.resume(request, os.pullEvent(result[2]))}
-            end
-            if not result[1] then return nil, "Request error: " .. tostring(result[2]) end
-            local response = result[2] or result[4] -- Newer CC may return an error handle.
-            if not response then return nil, tostring(result[3] or "No response; CC supplied no reason") end
-            -- Reading/closing response handles does not yield, unlike http.get.
-            local ok, code, body = pcall(function()
-                return response.getResponseCode and response.getResponseCode() or 200, response.readAll()
-            end)
-            local closed, closeError = pcall(response.close)
-            if not ok then return nil, "Cannot read response: " .. tostring(code) end
-            if not closed then return nil, "Cannot close response: " .. tostring(closeError) end
-            if code ~= 200 then return nil, "GitHub returned HTTP " .. tostring(code) end
-            if not result[2] then return nil, tostring(result[3] or "HTTP request failed") end
-            if type(body) ~= "string" or #body == 0 then return nil, "Empty app source" end
-            return body
-        end
-        local function checkLua(body)
-            if body == nil then return nil end
-            local chunk, err = loadstring(body, path)
-            if not chunk then return nil, "Invalid app Lua: " .. tostring(err) end
-            return body
-        end
-        local function apiSource(body)
-            -- Read only GitHub's known base64 content field; no JSON API or
-            -- execution of downloaded text is needed on old ComputerCraft.
-            if not body:match('"type"%s*:%s*"file"') or not body:match('"encoding"%s*:%s*"base64"')
-                or body:match('"name"%s*:%s*"([^"]*)"') ~= path then
-                return nil, "GitHub API did not return the requested base64 file"
-            end
-            local encoded = body:match('"content"%s*:%s*"([^"]*)"')
-            if not encoded then return nil, "GitHub API response has no file content" end
-            encoded = encoded:gsub("\\n", ""):gsub("\\r", ""):gsub("\\/", "/"):gsub("%s", "")
-            local padding = encoded:match("=*$")
-            local data = encoded:sub(1, #encoded - #padding)
-            if #encoded % 4 ~= 0 or #padding > 2 or data:find("[^A-Za-z0-9+/]") then
-                return nil, "Invalid base64 in GitHub API response"
-            end
-            local alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-            local output, value, bits = {}, 0, 0
-            for index = 1, #data do
-                value, bits = value * 64 + alphabet:find(data:sub(index, index), 1, true) - 1, bits + 6
-                if bits >= 8 then
-                    bits = bits - 8
-                    output[#output + 1] = string.char(math.floor(value / 2 ^ bits))
-                    value = value % 2 ^ bits
-                end
-            end
-            local decoded = table.concat(output)
-            if value ~= 0 or tonumber(body:match('"size"%s*:%s*(%d+)')) ~= #decoded then
-                return nil, "GitHub API file size/encoding mismatch"
-            end
-            if #decoded == 0 then return nil, "Empty app source" end
-            return decoded
-        end
-        local rawError, apiError, body
-        local apiUrl = "https://api.github.com/repos/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/contents/"
-            .. path .. "?ref=" .. ref
-        body, apiError = download(apiUrl)
-        if body then contents, apiError = apiSource(body) end
-        if contents then contents, apiError = checkLua(contents) end
-        if contents then
-            print("Downloaded via GitHub API")
-        else
-            print("GitHub API failed; trying raw download")
-            contents, rawError = download(url)
-            if contents then contents, rawError = checkLua(contents) end
-            if not contents then
-                print("Raw: " .. tostring(rawError))
-                print("API: " .. tostring(apiError))
-                print("No response from both? Ask the server admin to check GitHub HTTPS access and the Java/server log.")
-                error("GitHub app download failed; installed files were not changed", 0)
-            end
-            print("Downloaded via GitHub raw")
+        local rawError, apiError
+        contents, rawError, apiError = fetchRepo(path, ref, checkLua)
+        if not contents then
+            print(tostring(rawError))
+            print(tostring(apiError))
+            print("No response from both? Ask the server admin to check GitHub HTTPS access and the Java/server log.")
+            error("GitHub app download failed; installed files were not changed", 0)
         end
     elseif source == "--file" then
         local file = assert(fs.open(args[4], "r"), "Cannot read app source: " .. args[4])
@@ -6998,26 +7398,17 @@ if role == "app" then
     local chunk, err = loadstring(contents, path)
     assert(chunk, "Invalid app Lua: " .. tostring(err))
     -- Read settings without resetting them or executing the app at install time.
-    local storageChunk = assert(loadstring(sources["lib_storage.lua"], "lib_storage.lua"))
-    setfenv(storageChunk, getfenv(1))
-    local storage = storageChunk()
-    local configPath = "configs_os.txt"
-    local settings = storage.load(configPath)
-    if not settings then
-        for _, suffix in ipairs({"", ".tmp", ".bak"}) do
-            assert(not fs.exists(configPath .. suffix), "Unreadable OS settings")
-        end
-        settings = {}
-    end
-    if settings.enabledApps == nil then settings.enabledApps = {} end
-    assert(type(settings.enabledApps) == "table", "Invalid enabledApps setting")
+    local settings, configPath = readSettings()
     settings.enabledApps[name] = true -- Explicit app installation opts this app in.
     sources[path], sources[configPath] = contents, textutils.serialize(settings)
     files = {path, configPath}
 else
     for index = 2, #args do
-        assert(args[index] == "--startup", "Usage: inst server|io|monitor|sensor|relay [--startup]")
-        autorun = true
+        if args[index] == "--apps" and role == "server" then withApps = true
+        else
+            assert(args[index] == "--startup", roleUsage)
+            autorun = true
+        end
     end
     files = {"lib_work.lua", "lib_storage.lua", "lib_network.lua"}
     if role == "server" or role == "monitor" then files[#files + 1] = "lib_gui.lua" end
@@ -7047,9 +7438,7 @@ end
 if role ~= "app" then
     -- Upgrade old folder-based installations without resetting IDs, apps or state.
     -- Existing flat files take precedence; old files remain recovery copies.
-    local storageChunk = assert(loadstring(sources["lib_storage.lua"], "lib_storage.lua"))
-    setfenv(storageChunk, getfenv(1))
-    local storage = storageChunk()
+    local storage = loadStorage()
     local function existsAny(path)
         return fs.exists(path) or fs.exists(path .. ".tmp") or fs.exists(path .. ".bak")
     end
@@ -7104,34 +7493,20 @@ if role ~= "app" then
         end
     end
 end
--- Check every file before replacing any installed program.
-for _, path in ipairs(files) do
-    local contents = assert(sources[path], "Missing bundled file: " .. path)
-    if path:match("%.lua$") or path == "startup" then
-        local chunk, err = loadstring(contents, path)
-        assert(chunk, "Invalid Lua: " .. path .. ": " .. tostring(err))
-    else assert(type(textutils.unserialize(contents)) == "table", "Invalid settings: " .. path) end
-end
-for _, path in ipairs(files) do
-    assert(not path:find("/", 1, true), "Install targets must be root filenames")
-    local file = assert(fs.open(path .. ".download", "w"), "Cannot stage " .. path)
-    file.write(sources[path])
-    file.close()
-end
-for _, path in ipairs(files) do
-    if fs.exists(path) then
-        if fs.exists(path .. ".pre_update") then fs.delete(path .. ".pre_update") end
-        fs.move(path, path .. ".pre_update")
-    end
-    fs.move(path .. ".download", path)
-    print("Installed " .. path)
-end
+install(files)
 if role == "app" then
     print("Installed and enabled user app: " .. args[2])
     print("Restart the central OS to load it")
     return
 end
 print("Installed " .. role .. " from the bundled files")
+if withApps then
+    if http and type(http.get) == "function" then
+        local names = {}
+        for _, item in ipairs((loadCatalog("main"))) do names[#names + 1] = item.name end
+        installApps(names, "main")
+    else print("HTTP is disabled: apps skipped. Later: inst apps") end
+end
 if autorun then
     print("Autorun enabled; an existing startup is kept as startup.pre_update")
     print("Run reboot to start automatically")

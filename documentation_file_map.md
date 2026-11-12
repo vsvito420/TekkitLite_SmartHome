@@ -1,10 +1,12 @@
 # Flat-root filename map
 
-Repository: https://github.com/DJDarkMatter/Tekkit-Lite-Smart-Home-V2
+Repository: https://github.com/vsvito420/TekkitLite_SmartHome
 
 All distributed files have unique filenames and live in the repository root. Runtime-created configuration, state, app and startup files also live in the computer root.
 
 The [menu tree PDF](documentation_menu_tree.pdf), [editable menu source](documentation_menu_tree.md), and `tools_build_menu_tree.py` also live in the root. Full releases include all three. The PDF contains the menu hub, a complete overview, and linked detail pages. System overview is a Settings submenu.
+
+See [v49 files](documentation_update_v49.md) for the app loader, store, Pastebin backup and Net Scope. `apps_catalog.txt` lists the installable apps; `apps_net_scope.lua`, `documentation_net_scope.md` and `tests_v49.lua` are new. The three Level Emitter files named under v30 were removed.
 
 See [v46 files and deletions](documentation_update_v46.md) for the compact Solar Farm, shared keypads and Level Emitter retirement.
 

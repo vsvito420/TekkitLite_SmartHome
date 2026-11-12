@@ -632,6 +632,32 @@ Browse IO history and save traces for selected wires.
     - [Save as view](#shared-dialogs-touch-keyboard) — Discovery views only. Name a snapshot of the current lane selection.
 - Close — Closes the current window.
 
+### Net Scope
+
+Live list of SmartHome radio packets seen and sent by the central OS.
+
+**Path** Desktop → Start → Net Scope
+
+**Source** [apps_net_scope.lua](apps_net_scope.lua)
+
+- [[Packet row]](#net-scope-packet) — Newest first. Green is received, blue is sent, gray is ignored, red is foreign.
+- <a name="net-scope-packet"></a> [Packet details] — Direction, type, client, channel, size, relay hops and fields.
+  - Type — Returns to the list filtered to this packet type.
+  - Client — Returns to the list filtered to this client.
+- Hold / Live — Freezes the list or follows new packets.
+- Menu / Net Scope menu
+  - Direction — Cycles RX+TX, RX only and TX only.
+  - Type
+    - [Packet type] — All, or one type seen in the capture.
+  - Client
+    - [Client] — All, or one client seen in the capture.
+  - Ignored/foreign — Shows or hides duplicates and packets not meant for the OS.
+  - Render packets — Captures or skips monitor redraw packets.
+  - Statistics — Packet and byte totals by type and by client.
+  - Clear capture — Empties the capture buffer.
+  - [UI color](#shared-dialogs-os-color-palette) — Standard OS palette.
+- Close — Closes the current window.
+
 ### Notes
 
 Notes, interactive checklists and Markdown export.

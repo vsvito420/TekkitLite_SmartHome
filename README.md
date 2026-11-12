@@ -1,10 +1,23 @@
 # SmartHome OS for Tekkit Lite
 
-Repository: [DJDarkMatter/Tekkit-Lite-Smart-Home-V2](https://github.com/DJDarkMatter/Tekkit-Lite-Smart-Home-V2). Every distributed file lives in the root; see the [complete filename map](documentation_file_map.md).
+Repository: [vsvito420/TekkitLite_SmartHome](https://github.com/vsvito420/TekkitLite_SmartHome), a fork of [DJDarkMatter/Tekkit-Lite-Smart-Home-V2](https://github.com/DJDarkMatter/Tekkit-Lite-Smart-Home-V2) by DJDarkMatter. Every distributed file lives in the root; see the [complete filename map](documentation_file_map.md).
 
 A central ComputerCraft computer owns apps, saved state and output decisions. Remote computers are reusable IO, monitor, sensor or wireless relay clients. See [the target design](documentation_design.md), [the review](documentation_review.md) and [the app/protocol reference](documentation_api.md).
 
 This repair targets Lua 5.1 and the channel-based modem API available in ComputerCraft 1.5. It uses serialized **strings** on the wire and no CC:Tweaked-only APIs. It has been tested with simulated ComputerCraft APIs, **not inside the Minecraft server**.
+
+## Quick start (v49)
+
+Upload `install.lua` to Pastebin once. Then, with `CODE` as your paste ID:
+
+```text
+pastebin get CODE inst        (on every computer)
+inst monitor --startup        (monitor computers, then reboot)
+inst io --startup             (IO computers, then reboot)
+inst server --startup --apps  (central computer, then reboot)
+```
+
+`inst store` picks single apps from a list, `inst apps` reloads all of them, and `inst backup` / `inst restore CODE` move a computer's settings through Pastebin. The new [Net Scope](documentation_net_scope.md) app shows live network packets. See [all v49 commands](documentation_update_v49.md).
 
 ## Updating to v48
 
@@ -142,7 +155,7 @@ inst app APP_NAME PASTE_ID
 inst app APP_NAME --file /path/to/app.lua
 ```
 
-`inst app APP_NAME` fetches the root file `apps_APP_NAME.lua` from the V2 repository's `main` branch, using `https://api.github.com/repos/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/contents/apps_APP_NAME.lua?ref=main`. The GitHub API is the confirmed working route on the target server, so bundled-v10 uses it first. Use `--ref` to select a different branch or commit. Keep the current app file on GitHub; only the installer needs a Pastebin paste. This mode requires working HTTP access to GitHub from the server. The optional Pastebin mode uses the built-in `pastebin get` program; the file mode needs no network.
+`inst app APP_NAME` fetches the root file `apps_APP_NAME.lua` from the V2 repository's `main` branch, using `https://api.github.com/repos/vsvito420/TekkitLite_SmartHome/contents/apps_APP_NAME.lua?ref=main`. The GitHub API is the confirmed working route on the target server, so bundled-v10 uses it first. Use `--ref` to select a different branch or commit. Keep the current app file on GitHub; only the installer needs a Pastebin paste. This mode requires working HTTP access to GitHub from the server. The optional Pastebin mode uses the built-in `pastebin get` program; the file mode needs no network.
 
 The installer decodes the API's base64 content using Lua 5.1, checks the filename and decoded byte count, and compiles the recovered source without running it. If the API request fails or returns an invalid file, it tries `raw.githubusercontent.com` as a fallback. This uses only GitHub hosts and needs no token or newer JSON API. If both routes fail, the console prints separate `Raw:` and `API:` reasons. Failed downloads leave the installed app and settings intact.
 

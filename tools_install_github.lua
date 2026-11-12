@@ -12,7 +12,7 @@ assert(ref:match("^[%w_./-]+$"), "Invalid branch or commit")
 assert(not args[4] and (not args[3] or args[3] == "--startup"), "Unexpected install argument")
 assert(shell.dir() == "", "Run cd / first")
 assert(http and http.get, "HTTP is disabled; use the bundled installer via Pastebin")
-local url = "https://raw.githubusercontent.com/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/" .. ref .. "/install.lua"
+local url = "https://raw.githubusercontent.com/vsvito420/TekkitLite_SmartHome/" .. ref .. "/install.lua"
 local response = assert(http.get(url), "Cannot download the V2 installer; use Pastebin instead")
 local code = response.getResponseCode and response.getResponseCode() or 200
 local contents = response.readAll(); response.close()

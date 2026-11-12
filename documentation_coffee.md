@@ -4,7 +4,7 @@ This optional, single-file app adapts `oldfiles_coffee_timer.lua`. It runs on th
 
 ## Install on the central computer
 
-Upload the complete new `install.lua` as your single installer Pastebin paste. Keep the current `apps_coffee.lua` in the root of `DJDarkMatter/Tekkit-Lite-Smart-Home-V2` on GitHub's `main` branch; no app paste is needed. If the OS console is running, type `quit` to return to CraftOS. Then:
+Upload the complete new `install.lua` as your single installer Pastebin paste. Keep the current `apps_coffee.lua` in the root of `vsvito420/TekkitLite_SmartHome` on GitHub's `main` branch; no app paste is needed. If the OS console is running, type `quit` to return to CraftOS. Then:
 
 ```text
 cd /

@@ -1,0 +1,15 @@
+{
+{name="clock",title="Clock",about="Clock, alarms, timers, stopwatch"},
+{name="coffee",title="Coffee",about="Coffee machine timer"},
+{name="io_scope",title="IO Scope",about="Redstone IO history viewer"},
+{name="logic_sandbox",title="Logic Sandbox",about="Rules and Boolean circuits"},
+{name="me_monitor",title="ME Monitor",about="AE item stock monitors"},
+{name="me_storage",title="ME Storage",about="AE storage overview"},
+{name="net_scope",title="Net Scope",about="Network packet viewer"},
+{name="notes",title="Notes",about="Notes and checklists"},
+{name="reactors",title="Reactors",about="Reactor overview and control"},
+{name="screensaver",title="Screensaver",about="Animated screensavers"},
+{name="solar_farm",title="Solar Farm",about="Solar panel production stats"},
+{name="switchboard",title="Switchboard",about="Buttons for redstone outputs"},
+{name="window_presets",title="Window Presets",about="Save and restore layouts"},
+}

@@ -161,6 +161,7 @@ function Network.new(config, isServer, logger)
             if config.relayEnabled ~= false then net.modem.transmit(relayChannel, net.listenChannel, raw) end
         end)
         if not ok then net.modem, net.side = nil, nil end
+        if ok and net.tap then net.tap("tx", packet, channel, #raw, true) end
         return ok
     end
 
@@ -239,8 +240,13 @@ function Network.new(config, isServer, logger)
         return packet
     end
 
+    -- Optional observer (v49 Net Scope): sees every decoded packet and whether
+    -- it was accepted. It is never called unless a viewer has attached it.
     function net.receive(side, channel, replyChannel, raw)
-        return accept(decode(side, channel, replyChannel, raw), replyChannel)
+        local packet = decode(side, channel, replyChannel, raw)
+        local accepted = accept(packet, replyChannel)
+        if net.tap then net.tap("rx", packet, channel, type(raw) == "string" and #raw or 0, accepted ~= nil) end
+        return accepted
     end
 
     function net.receiveForRelay(side, channel, replyChannel, raw)

@@ -11,7 +11,7 @@ import re
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "documentation_menu_tree.md"
 PDF = ROOT / "documentation_menu_tree.pdf"
-REPO = "https://github.com/DJDarkMatter/Tekkit-Lite-Smart-Home-V2"
+REPO = "https://github.com/vsvito420/TekkitLite_SmartHome"
 GROUPS = {
     "OS": "#11645B",
     "Automation": "#28559A",

@@ -872,7 +872,7 @@ function tests.installer_uses_only_the_v2_root_bundle_for_every_role()
         comp.env.shell = {dir = function() return "" end}
         local requests = 0
         comp.env.http = {get = function(url)
-            equal(url, "https://raw.githubusercontent.com/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/main/install.lua")
+            equal(url, "https://raw.githubusercontent.com/vsvito420/TekkitLite_SmartHome/main/install.lua")
             requests = requests + 1
             local file = assert(io.open("install.lua", "r"))
             local contents = file:read("*a"); file:close()
@@ -944,7 +944,7 @@ function tests.bundled_installer_boots_all_roles_without_http_or_newer_fs_api()
         comp:start()
         assert(role == "server" and comp.server or comp.client)
         if role == "server" then equal(next(comp.server.apps), nil) end
-        assert(table.concat(comp.log, "\n"):find("SmartHome installer: bundled-v48", 1, true))
+        assert(table.concat(comp.log, "\n"):find("SmartHome installer: bundled-v49", 1, true))
     end
 end
 function tests.bundled_installer_does_not_contact_github_and_keeps_startup_without_flag()
@@ -1038,7 +1038,7 @@ function tests.app_installer_downloads_actual_switchboard_and_boots_it_with_only
     local source = file:read("*a"); file:close()
     local requests = 0
     comp.env.http = {get = function(url)
-        equal(url, "https://api.github.com/repos/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/contents/apps_switchboard.lua?ref=main")
+        equal(url, "https://api.github.com/repos/vsvito420/TekkitLite_SmartHome/contents/apps_switchboard.lua?ref=main")
         requests = requests + 1
         return {readAll = function() return githubFile("apps_switchboard.lua", source) end, close = function() end}
     end}
@@ -1072,7 +1072,7 @@ function tests.app_installer_github_default_downloads_one_app_without_running_or
     local app = '_G.githubAppExecuted=true; return {background=function(dt,s) s.elapsed=(s.elapsed or 0)+dt end}'
     local downloads, closed = 0, false
     comp.env.http = {get = function(url)
-        equal(url, "https://api.github.com/repos/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/contents/apps_test_app.lua?ref=main")
+        equal(url, "https://api.github.com/repos/vsvito420/TekkitLite_SmartHome/contents/apps_test_app.lua?ref=main")
         downloads = downloads + 1
         coroutine.yield("http_success") -- CC 1.5 cannot yield through pcall.
         return {readAll = function() return githubFile("apps_test_app.lua", app) end, close = function() closed = true end}
@@ -1110,7 +1110,7 @@ function tests.app_installer_github_can_select_a_branch_or_commit()
         install("server")
         local closed = false
         comp.env.http = {get = function(url)
-            equal(url, "https://api.github.com/repos/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/contents/apps_coffee.lua?ref=" .. ref)
+            equal(url, "https://api.github.com/repos/vsvito420/TekkitLite_SmartHome/contents/apps_coffee.lua?ref=" .. ref)
             return {getResponseCode = function() return 200 end,
                 readAll = function() return githubFile("apps_coffee.lua", "return {}") end, close = function() closed = true end}
         end}
@@ -1178,14 +1178,14 @@ function tests.app_installer_github_raw_fallback_handles_api_failure_native_erro
         comp.env.http = {get = function(url)
             requests[#requests + 1] = url
             if #requests == 1 then
-                equal(url, "https://api.github.com/repos/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/contents/apps_coffee.lua?ref=main")
+                equal(url, "https://api.github.com/repos/vsvito420/TekkitLite_SmartHome/contents/apps_coffee.lua?ref=main")
                 coroutine.yield("http_failure")
                 if failure == "nil" then return nil end -- Original screenshot: no error reason.
                 if failure == "native_error" then error("Access denied") end
                 if failure == "html" then return response(200, "<!DOCTYPE html>") end
                 return nil, "Forbidden", response(403, "{}")
             end
-            equal(url, "https://raw.githubusercontent.com/DJDarkMatter/Tekkit-Lite-Smart-Home-V2/main/apps_coffee.lua")
+            equal(url, "https://raw.githubusercontent.com/vsvito420/TekkitLite_SmartHome/main/apps_coffee.lua")
             coroutine.yield("http_success")
             return response(200, "return {}\n")
         end}
@@ -1419,6 +1419,7 @@ assert(hostLoadfile("tests_clock.lua"))()(tests, newBus, monitor, serialize, uns
 assert(hostLoadfile("tests_system.lua"))()(tests, newBus, monitor, serialize, unserialize, equal)
 assert(hostLoadfile("tests_work.lua"))()(tests, newBus, monitor, serialize, unserialize, equal)
 assert(hostLoadfile("tests_v39.lua"))()(tests, newBus, monitor, serialize, unserialize, equal)
+assert(hostLoadfile("tests_v49.lua"))()(tests, newBus, monitor, serialize, unserialize, equal, githubFile)
 local names, failures = {}, {}
 local testFilter=rawget(_G,"SMART_HOME_TEST_FILTER") or os.getenv and os.getenv("SMART_HOME_TEST_FILTER")
 for name in pairs(tests) do if not testFilter or name:find(testFilter,1,true) then names[#names + 1] = name end end
