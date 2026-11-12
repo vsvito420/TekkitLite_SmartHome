@@ -144,6 +144,20 @@ Render/touch/selection contexts include `{windowId, monitorId, appName, view}`. 
 
 Use `view` only for small UI state, not live telemetry, peripherals or callbacks. Snapshot cleaning accepts finite scalar values and plain tables up to depth 8 / 2,048 visited values, with strings up to 4,096 characters; `hits`/`styles`, functions and cycles are omitted. Oversized snapshots fall back to empty navigation without blocking app/output checkpoints. Hit maps are rebuilt from the next frame. OS selector overlays themselves remain transient; their parent app window/navigation is retained. Sensor caches remain runtime-only and are not part of view restoration. Monitor disconnects keep their windows; actual resolution changes can still refit geometry to what fits.
 
+## v50 desktop shell
+
+| API | Result |
+| --- | --- |
+| `api.getOSSettings()` | Also returns `barPosition` (`"bottom"`/`"top"`), `barLayout` (`"classic"`/`"centered"`), `workspaces` (1–9) and `touchAssist` |
+| `api.setDesktopOptions(changes)` | `ok, error`; validates and saves any of those four keys together |
+| `api.getWorkspaces(monitorId)` | `{count, current, occupied = {[number] = true}}` |
+| `api.setWorkspace(monitorId, number)` | `ok, error`; shows that workspace on the monitor |
+| `api.moveWindowToWorkspace(windowId, number)` | `ok, error`; the monitor keeps showing its current workspace |
+| `api.getMonitors()` | Sorted `{id, displayName, online, width, height, textScale}`; `textScale` is nil for monitor clients older than v50 |
+| `api.setMonitorScale(monitorId, scale)` | `ok, error`; asks a v50 monitor client to apply and save a text scale of 0.5–5 |
+
+Windows carry an optional `workspace` number. The desktop is always laid out with the bar in the last row; with `barPosition = "top"` the finished frame is rotated by one row and touches are mapped back, so app and window coordinates do not change. `api.ui.actionAt` applies touch assist; `api.ui.nearest(hits, x, y)` exposes the rule. The monitor client accepts `monitorConfig {textScale}` from its OS session and stores it per side in `textScales` of `configs_monitor.txt`.
+
 ## v49 app loader, catalog and packet capture
 
 `inst apps`, `inst store`, `inst list`, `inst remove`, `inst share`, `inst backup` and `inst restore` are described in [the v49 notes](documentation_update_v49.md). The store reads `apps_catalog.txt`, a serialized Lua array of `{name, title, about}`; `tools_build_installer.py` bundles it and fails if it does not match the `apps_*.lua` files.

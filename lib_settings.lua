@@ -65,7 +65,42 @@ function Settings.new(actions)
             local function label(text, color) return w >= 24 and text .. " " .. api.ui.colourName(color) or text end
             ui.menu("Appearance", {{label("Background", settings.backgroundColour), "background", nil, true, settings.backgroundColour},
                 {label(w >= 13 and "Window border" or "Borders", settings.windowBorderColour), "windowBorder", nil, true, settings.windowBorderColour},
-                {label("Taskbar", settings.taskbarColour), "taskbar", nil, true, settings.taskbarColour}}, "appearance")
+                {label("Taskbar", settings.taskbarColour), "taskbar", nil, true, settings.taskbarColour},
+                {"Desktop", "desktop"}, {"Monitors", "monitors"}}, "appearance")
+        elseif section == "desktop" then
+            local settings = api.getOSSettings()
+            ui.menu(view.status or "Desktop", {
+                {"Bar: " .. (settings.barPosition == "top" and "Top" or "Bottom"), "barPosition"},
+                {"Clock: " .. (settings.barLayout == "centered" and "Centre" or "Right"), "barLayout"},
+                {"Workspaces: " .. settings.workspaces, "workspaceCount"},
+                {"Touch assist: " .. (settings.touchAssist and "On" or "Off"), "touchAssist"},
+                {w >= 20 and "Preset: Tiling bar" or "Tiling bar", "presetTiling"},
+                {w >= 20 and "Preset: Classic" or "Classic", "presetClassic"}}, "desktop", {{"Back", "appearance"}})
+        elseif section == "workspaceCount" then
+            local rows, current = {}, api.getOSSettings().workspaces
+            for count = 1, 9 do rows[count] = {count .. (count == current and " *" or ""), "setWorkspaces", count} end
+            ui.menu("Workspaces", rows, "workspaceCount", {{"Back", "desktop"}})
+        elseif section == "monitors" then
+            local rows = {}
+            for _, item in ipairs(api.getMonitors()) do
+                local size = item.width and (" " .. item.width .. "x" .. item.height) or ""
+                rows[#rows + 1] = {(item.online and "+ " or "- ") .. item.displayName .. size, "monitor", item.id}
+            end
+            if #rows == 0 then rows[1] = {"No monitors", nil, nil, false} end
+            ui.menu("Monitors", rows, "monitors", {{"Back", "appearance"}})
+        elseif section == "monitor" then
+            local item
+            for _, candidate in ipairs(api.getMonitors()) do if candidate.id == view.monitorId then item = candidate end end
+            if not item then ui.info("Monitor", {"Monitor removed"}, "monitor", "monitors")
+            else
+                local scale = item.textScale
+                ui.info(item.displayName, {item.online and "Online" or "Offline",
+                    item.width and (item.width .. " x " .. item.height .. " characters") or "Size unknown",
+                    scale and ("Text scale " .. scale) or "Text scale: update monitor client",
+                    view.status or "Smaller text gives more room"}, "monitor", "monitors")
+                ui.footer({{"Back", "monitors"}, {"Text -", "scale", -0.5, item.online and scale ~= nil and scale > 0.5},
+                    {"Text +", "scale", 0.5, item.online and scale ~= nil and scale < 5}})
+            end
         elseif section == "screensavers" then
             local names, installed = api.getScreensavers()
             local rows = {}
@@ -120,6 +155,24 @@ function Settings.new(actions)
         if action == "page" then view.pages[value.key] = value.page
         elseif action == "close" then return api.closeWindow(id)
         elseif action == "background" or action == "windowBorder" or action == "taskbar" then return api.pickColour(id, action)
+        elseif action == "barPosition" or action == "barLayout" or action == "touchAssist" or action == "setWorkspaces"
+            or action == "presetTiling" or action == "presetClassic" then
+            local settings, changes = api.getOSSettings(), {}
+            if action == "barPosition" then changes.barPosition = settings.barPosition == "top" and "bottom" or "top"
+            elseif action == "barLayout" then changes.barLayout = settings.barLayout == "centered" and "classic" or "centered"
+            elseif action == "touchAssist" then changes.touchAssist = not settings.touchAssist
+            elseif action == "setWorkspaces" then changes.workspaces = value
+            elseif action == "presetTiling" then
+                changes = {barPosition = "top", barLayout = "centered", workspaces = math.max(4, settings.workspaces)}
+            else changes = {barPosition = "bottom", barLayout = "classic", workspaces = 1} end
+            local ok, err = api.setDesktopOptions(changes)
+            view.section, view.status = "desktop", not ok and tostring(err) or nil
+        elseif action == "monitor" then view.monitorId, view.section, view.status = value, "monitor", nil
+        elseif action == "scale" then
+            local scale
+            for _, item in ipairs(api.getMonitors()) do if item.id == view.monitorId then scale = item.textScale end end
+            local ok, err = api.setMonitorScale(view.monitorId, (scale or 0.5) + value)
+            view.status = ok and "Scale sent; the screen redraws" or tostring(err)
         elseif action == "nameClient" then
             if value then view.nameId = value end
             view.section, view.keyboard, view.status = "nameClient", nil, nil

@@ -17,6 +17,7 @@ Launcher, taskbar, title-bar controls and window placement.
 **Source** [lib_desktop.lua](lib_desktop.lua), [lib_server.lua](lib_server.lua), [lib_monitor.lua](lib_monitor.lua), [documentation_desktop.md](documentation_desktop.md)
 
 - Taskbar
+  - [Workspace strokes] — Shown with two or more workspaces. A solid block is the current one, = has windows, - is empty. Tap to switch.
   - Start [+] — Lists Settings and compatible enabled apps alphabetically. A star marks a running app. Roomy menus use taller entries.
     - [Settings](#settings) — Opens the built-in Settings window.
     - [App] — Opens the app or focuses its existing window on this monitor.
@@ -42,6 +43,8 @@ Launcher, taskbar, title-bar controls and window placement.
         - Other corner — Touch, nudge or repick. OK applies if the window fits.
     - <a name="desktop--windows-move"></a> Move
       - Pick position — Touch, nudge or use Place to repick. OK applies and Cancel exits.
+    - Workspace — Shown with two or more workspaces.
+      - [Workspace number] — Sends the window there and keeps the current workspace on screen.
     - Cancel — Closes the layout menu.
 - [Monitor-client calibration] — Run clients_monitor_client.lua calibrate [side].
   - [Measure nine points] — Touch the centers from the usual viewing position.
@@ -62,6 +65,17 @@ Appearance, system diagnostics, client names and saved app data.
   - [Background](#shared-dialogs-os-color-palette) — Choose a desktop background color.
   - [Window border / Borders](#shared-dialogs-os-color-palette) — Choose a frame color.
   - [Taskbar](#shared-dialogs-os-color-palette) — Choose a taskbar color.
+  - Desktop
+    - Bar — Switches the bar between the bottom and the top row.
+    - Clock — Right end, or centred with window tabs on both sides.
+    - Workspaces
+      - [1 to 9] — Number of workspaces on every monitor.
+    - Touch assist — A tap one cell beside a single control selects it.
+    - Preset: Tiling bar — Top bar, centred clock and at least four workspaces.
+    - Preset: Classic — Bottom bar, clock on the right and one workspace.
+  - Monitors
+    - [Monitor] — Status, size in characters and text scale.
+      - Text - / Text + — Changes the text scale in steps of 0.5. Smaller text gives more room.
 - System overview
   - Central computer — IDs, channels, uptime, last checkpoint, world clock and player status.
   - Clients — Announced clients and online/offline status.

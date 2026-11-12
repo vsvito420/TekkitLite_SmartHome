@@ -345,9 +345,19 @@ function Server.new(net, storage, config, logger)
         end
     end
 
+    -- v50 desktop shell options live beside the colours. Missing or invalid
+    -- saved values read as the classic desktop: bottom bar, one workspace.
+    local function barTop() return state.appearance.barPosition == "top" end
+    local function barCentred() return state.appearance.barLayout == "centered" end
+    local function workspaceCount()
+        local count = state.appearance.workspaces
+        return integer(count, 1, 9) and count or 1
+    end
     function api.getOSSettings()
         return {backgroundMode = "solid", backgroundColour = state.appearance.backgroundColour,
-            windowBorderColour = state.appearance.windowBorderColour, taskbarColour = state.appearance.taskbarColour}
+            windowBorderColour = state.appearance.windowBorderColour, taskbarColour = state.appearance.taskbarColour,
+            barPosition = barTop() and "top" or "bottom", barLayout = barCentred() and "centered" or "classic",
+            workspaces = workspaceCount(), touchAssist = state.appearance.touchAssist ~= false}
     end
     function api.getAppColour(name) return state.appearance.appColours[name] or 2048 end
     local function saveAppearance(change)
@@ -368,6 +378,26 @@ function Server.new(net, storage, config, logger)
     function api.setTaskbarColour(value)
         if not colour(value) then return false, "Choose a CC color" end
         return saveAppearance(function(appearance) appearance.taskbarColour = value end)
+    end
+    local desktopOptions = {
+        barPosition = function(value) return value == "top" or value == "bottom" end,
+        barLayout = function(value) return value == "classic" or value == "centered" end,
+        workspaces = function(value) return integer(value, 1, 9) end,
+        touchAssist = function(value) return type(value) == "boolean" end}
+    -- changes is a table of options; all are validated first and saved together.
+    function api.setDesktopOptions(changes)
+        if type(changes) ~= "table" then return false, "Expected desktop options" end
+        for key, value in pairs(changes) do
+            if not desktopOptions[key] or not desktopOptions[key](value) then return false, "Invalid desktop option: " .. tostring(key) end
+        end
+        local ok, err = saveAppearance(function(appearance)
+            for key, value in pairs(changes) do appearance[key] = value end
+        end)
+        for id, monitor in pairs(server.monitors) do
+            monitor.launcher, monitor.layoutMenu, monitor.placement = false, nil, nil
+            invalidateInput(id)
+        end
+        return ok, err
     end
     local systemColourSetters = {background = api.setBackgroundColour,
         windowBorder = api.setWindowBorderColour, taskbar = api.setTaskbarColour}
@@ -1029,19 +1059,30 @@ function Server.new(net, storage, config, logger)
             ok={x1=x+inset,x2=x+width-inset-1,y=top+math.floor((bottom-top)/2),y1=top,y2=bottom}}
     end
 
-    local function windowsFor(monitorId, stable)
-        local list = {}
-        for _, win in pairs(state.windows) do
-            if win.monitorId == monitorId then list[#list + 1] = win end
-        end
-        table.sort(list, function(a, b) return stable and a.id < b.id or not stable and a.order < b.order end)
-        return list
-    end
     local function desktopState(id)
         if type(state.desktops[id]) ~= "table" then state.desktops[id] = {scroll = 1} end
         return state.desktops[id]
     end
+    -- Each monitor shows one workspace. Saved numbers above the configured
+    -- count fold into the last workspace, so no window can become unreachable.
+    local function workspaceOf(win)
+        return math.min(integer(win.workspace, 1, 9) and win.workspace or 1, workspaceCount())
+    end
+    local function currentWorkspace(id)
+        local saved = state.desktops[id]
+        local current = type(saved) == "table" and saved.workspace
+        return math.min(integer(current, 1, 9) and current or 1, workspaceCount())
+    end
+    local function windowsFor(monitorId, stable, everyWorkspace)
+        local list, current = {}, not everyWorkspace and currentWorkspace(monitorId)
+        for _, win in pairs(state.windows) do
+            if win.monitorId == monitorId and (everyWorkspace or workspaceOf(win) == current) then list[#list + 1] = win end
+        end
+        table.sort(list, function(a, b) return stable and a.id < b.id or not stable and a.order < b.order end)
+        return list
+    end
     local function focus(win)
+        if workspaceCount() > 1 then desktopState(win.monitorId).workspace = workspaceOf(win) end
         local order = 0
         for _, other in pairs(state.windows) do order = math.max(order, other.order) end
         win.order, win.minimized = order + 1, false
@@ -1131,6 +1172,7 @@ function Server.new(net, storage, config, logger)
             end
         end
         if not app.fullscreenOnly then win.relative = Desktop.relative(win, monitor) end
+        if workspaceCount() > 1 then win.workspace = currentWorkspace(monitorId) end
         state.windows[win.id], state.nextWindowId = win, win.id + 1
         focus(win)
         local ok, err = server.save()
@@ -1174,9 +1216,9 @@ function Server.new(net, storage, config, logger)
             local monitor = server.monitors[id]
             if monitor.online and (allMonitors or id == monitorId) then
                 local slot = {id = id, width = monitor.width, height = monitor.height, windows = {}}
-                for _, win in ipairs(windowsFor(id)) do
+                for _, win in ipairs(windowsFor(id, false, true)) do
                     if not win.transientWindow and win.appName ~= "window_presets" and fit(win, monitor) then
-                        slot.windows[#slot.windows + 1] = {appName = win.appName, layout = win.layout,
+                        slot.windows[#slot.windows + 1] = {appName = win.appName, layout = win.layout, workspace = win.workspace,
                             fullscreen = win.fullscreen, minimized = win.minimized, relative = Desktop.relative(win, monitor),
                             restore = copy(win.restore), view = viewSnapshot(server.views[win.id])}
                     end
@@ -1206,7 +1248,7 @@ function Server.new(net, storage, config, logger)
                     local app = definition(spec.appName)
                     local title = app and app.title or spec.appName
                     local win = {appName = spec.appName, monitorId = id, layout = spec.layout,
-                        fullscreen = spec.fullscreen, minimized = spec.minimized, relative = copy(spec.relative), restore = copy(spec.restore)}
+                        workspace = integer(spec.workspace, 1, 9) and spec.workspace or nil, fullscreen = spec.fullscreen, minimized = spec.minimized, relative = copy(spec.relative), restore = copy(spec.restore)}
                     local fits = app and not app.transientWindow and fit(win, monitor) and not win.tooSmall
                     if app and not app.transientWindow and not fits then
                         win.layout, win.fullscreen = "normal", nil
@@ -1779,6 +1821,56 @@ function Server.new(net, storage, config, logger)
         discardSmallDialog(win)
         return true
     end
+    -- v50 workspaces. Switching never stops an app: its windows stay open.
+    -- v50 monitor list and remote text scale for Settings.
+    function api.getMonitors()
+        local result = {}
+        for _, id in ipairs(sortedKeys(server.monitors)) do
+            local monitor = server.monitors[id]
+            result[#result + 1] = {id = id, displayName = api.clientName(id), online = monitor.online == true,
+                width = monitor.width, height = monitor.height, textScale = monitor.textScale}
+        end
+        return result
+    end
+    function api.setMonitorScale(monitorId, scale)
+        local monitor = server.monitors[monitorId]
+        if not monitor or not monitor.online then return false, "Monitor is offline" end
+        if not monitor.textScale then return false, "Update this monitor client first" end
+        if type(scale) ~= "number" or scale < 0.5 or scale > 5 or scale * 2 ~= math.floor(scale * 2) then
+            return false, "Scale is 0.5 to 5 in steps of 0.5"
+        end
+        if not net.toClient(monitor, {type = "monitorConfig", clientId = monitorId, monitorId = monitorId,
+            serverSession = server.session, textScale = scale}) then return false, "Could not reach the monitor" end
+        return true
+    end
+    function api.getWorkspaces(monitorId)
+        local occupied = {}
+        for _, win in pairs(state.windows) do
+            if win.monitorId == monitorId and not win.hideTaskbar then occupied[workspaceOf(win)] = true end
+        end
+        return {count = workspaceCount(), current = currentWorkspace(monitorId), occupied = occupied}
+    end
+    function api.setWorkspace(monitorId, number)
+        local monitor = server.monitors[monitorId]
+        if not monitor then return false, "Unknown monitor" end
+        if not integer(number, 1, workspaceCount()) then return false, "Unknown workspace" end
+        local saved = desktopState(monitorId)
+        saved.workspace, saved.scroll = number, 1
+        monitor.launcher, monitor.layoutMenu, monitor.placement = false, nil, nil
+        invalidateInput(monitorId)
+        return server.save()
+    end
+    function api.moveWindowToWorkspace(id, number)
+        local win = state.windows[id]
+        if not win then return false, "Unknown window" end
+        if not integer(number, 1, workspaceCount()) then return false, "Unknown workspace" end
+        local previous = win.workspace
+        win.workspace = number
+        local ok, err = server.save()
+        if not ok then win.workspace = previous; return false, err end
+        invalidateInput(win.monitorId)
+        return true
+    end
     function api.layoutWindow(id, mode)
         local win = state.windows[id]
         if not win then return false, "Unknown window" end
@@ -1895,11 +1987,25 @@ function Server.new(net, storage, config, logger)
         end
         monitor.appHits = appHits
         monitor.taskbar = {}
+        monitor.workspaces = workspaceCount()
+        -- The desktop is always laid out with the bar in the last row. A top
+        -- bar is a presentation choice: the finished frame is rotated by one
+        -- row below, and touch() applies the inverse.
+        monitor.barTop = not fullscreen and barTop()
         if not fullscreen then
-            local taskbar
-            taskbar, monitor.taskbar = Desktop.taskbar(windowsFor(id, true), monitor, server.gameTime, desktopState(id), active)
+            local taskbar, shell
+            if monitor.workspaces > 1 or barCentred() then
+                shell = api.getWorkspaces(id)
+                shell.workspaces, shell.layout = shell.count, barCentred() and "centered" or "classic"
+            end
+            taskbar, monitor.taskbar = Desktop.taskbar(windowsFor(id, true), monitor, server.gameTime, desktopState(id), active, shell)
             write(1, monitor.height, taskbar)
             surface.style(1, monitor.height, monitor.width, 1, Gui.contrast(taskbarColour), taskbarColour)
+            for _, hit in ipairs(monitor.taskbar) do
+                if hit.action == "workspace" then
+                    surface.style(hit.x1, monitor.height, hit.x2 - hit.x1 + 1, 1, hit.fg, hit.bg)
+                end
+            end
         end
         for _, hit in ipairs(monitor.taskbar) do
             if (hit.action == "launcher" and monitor.launcher) or (hit.action == "window" and hit.id == active) then
@@ -1935,8 +2041,24 @@ function Server.new(net, storage, config, logger)
             end
             local win = monitor.layoutMenu and state.windows[monitor.layoutMenu.windowId]
             local anchor = win and {x = win.x + win.width - 26, y = win.y + 1}
+            if monitor.launcher then
+                -- Open the launcher beside its button, and below a top bar.
+                for _, hit in ipairs(monitor.taskbar) do
+                    if hit.action == "launcher" and (hit.x1 > 1 or monitor.barTop) then
+                        anchor = {x = hit.x1, y = monitor.barTop and 1 or nil, wide = true}
+                    end
+                end
+            end
             local rect, content, hits, page, pages
-            if win then rect, content, hits, page, pages = Desktop.layoutPicker(win, definition(win.appName), monitor, model.menuPage, model.error, model.grid)
+            if win and model.pickWorkspace then
+                items = {}
+                for number = 1, monitor.workspaces do
+                    items[#items + 1] = {label = "Workspace " .. number .. (workspaceOf(win) == number and " *" or ""),
+                        value = "ws_" .. number, enabled = true}
+                end
+                items[#items + 1] = {label = "Cancel", value = "cancel", enabled = true}
+                rect, content, hits, page, pages = Desktop.menu(monitor, "Move to", items, model.menuPage, anchor)
+            elseif win then rect, content, hits, page, pages = Desktop.layoutPicker(win, definition(win.appName), monitor, model.menuPage, model.error, model.grid)
             else rect, content, hits, page, pages = Desktop.menu(monitor, title, items, model.menuPage, anchor) end
             model.menuPage, model.menuPages, model.menuHits = page, pages, hits
             surface.fill(rect.x, rect.y, rect.width, rect.height, 32768, 1)
@@ -2034,7 +2156,11 @@ function Server.new(net, storage, config, logger)
             surface.fill(hit.x1,hit.y1,hit.x2-hit.x1+1,hit.y2-hit.y1+1,16384,1)
             surface.write(hit.x1+math.max(0,math.floor((hit.x2-hit.x1-1)/2)),hit.y,"OK",16384,1,hit.x2-hit.x1+1)
         end
-        return surface.frame()
+        local lines, foreground, background = surface.frame()
+        if monitor.barTop then
+            for _, rows in ipairs({lines, foreground, background}) do table.insert(rows, 1, table.remove(rows)) end
+        end
+        return lines, foreground, background
     end
 
     function server.refreshMonitors(force, onlyId)
@@ -2063,6 +2189,9 @@ function Server.new(net, storage, config, logger)
     local function touch(id, x, y)
         local monitor = server.monitors[id]
         if not integer(x, 1, monitor.width) or not integer(y, 1, monitor.height) then return end
+        -- Inverse of the top-bar frame rotation in renderMonitor.
+        if monitor.barTop then y = y == 1 and monitor.height or y - 1 end
+        Gui.touchAssist = state.appearance.touchAssist ~= false
         local notification = firstNotification()
         if notification then
             local popup=monitor.notification
@@ -2133,10 +2262,24 @@ function Server.new(net, storage, config, logger)
             return
         end
         if not fullscreen and y == monitor.height then
+            local target
             for _, hit in ipairs(monitor.taskbar or {}) do
-                if x >= hit.x1 and x <= hit.x2 then
+                if x >= hit.x1 and x <= hit.x2 then target = hit; break end
+            end
+            if not target and Gui.touchAssist then
+                -- A tap in the gap beside exactly one bar item selects it.
+                for _, hit in ipairs(monitor.taskbar or {}) do
+                    if x == hit.x1 - 1 or x == hit.x2 + 1 then
+                        if target then target = nil; break end
+                        target = hit
+                    end
+                end
+            end
+            for _, hit in ipairs({target}) do
+                do
                     monitor.layoutMenu = nil
-                    if hit.action == "launcher" then
+                    if hit.action == "workspace" then api.setWorkspace(id, hit.id)
+                    elseif hit.action == "launcher" then
                         monitor.launcher = not monitor.launcher; monitor.menuPage = 1
                     elseif hit.action == "inbox" then
                         if monitor.inbox then monitor.inbox = nil else monitor.inbox = {} end
@@ -2181,6 +2324,10 @@ function Server.new(net, storage, config, logger)
                             elseif mode == "back" then
                                 model.grid, model.menuPage, model.error = nil, model.rootPage or 1, nil
                             elseif mode == "custom" or mode == "move" then beginPlacement(monitor, win, mode)
+                            elseif mode == "workspace" then model.pickWorkspace, model.menuPage, model.error = true, 1, nil
+                            elseif mode:match("^ws_%d$") then
+                                local ok, err = api.moveWindowToWorkspace(win.id, tonumber(mode:sub(4)))
+                                if ok then monitor.layoutMenu = nil else model.error = tostring(err) end
                             elseif mode == "cancel" then monitor.layoutMenu = nil
                             else
                                 local ok, err = api.layoutWindow(win.id, mode)
@@ -2294,6 +2441,8 @@ function Server.new(net, storage, config, logger)
                 if reconnect or client.width ~= message.width or client.height ~= message.height then invalidateInput(id) end
                 client.width, client.height = message.width, message.height
                 client.touchProtocol = message.touchProtocol == 1
+                -- Reported since v50; older monitor clients cannot be rescaled from here.
+                client.textScale = type(message.textScale) == "number" and message.textScale or nil
                 client.lastRender = nil -- Periodic full repaint also recovers a lost frame.
             elseif message.clientType == "io" then
                 ioReset = reconnect or client.announceNonce ~= nil and message.nonce <= client.announceNonce

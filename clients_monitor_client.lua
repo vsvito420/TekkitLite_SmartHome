@@ -18,8 +18,10 @@ for _, offset in pairs(config.touchOffsets) do
         and offset.x == math.floor(offset.x) and offset.y == math.floor(offset.y)
         and math.abs(offset.x) <= 3 and math.abs(offset.y) <= 3, "Invalid touch offset")
 end
+assert(config.textScales == nil or type(config.textScales) == "table", "Invalid textScales")
+for _, scale in pairs(config.textScales or {}) do assert(Monitor.validScale(scale), "Invalid textScales entry") end
 local net = Network.new(networkConfig, false)
-local client = Monitor.new(net, config)
+local client = Monitor.new(net, config, function(changed) return (storage.save("configs_monitor.txt", changed)) end)
 print("Monitor client: " .. config.clientId)
 client.scan()
 if args[1] then

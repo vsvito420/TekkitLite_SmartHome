@@ -3,9 +3,19 @@ local Monitor = {}
 local Gui = dofile("lib_gui.lua")
 local sides = {"top", "bottom", "left", "right", "front", "back"}
 
-function Monitor.new(net, config)
+function Monitor.validScale(value)
+    return type(value) == "number" and value >= 0.5 and value <= 5 and value * 2 == math.floor(value * 2)
+end
+
+-- saveConfig (v50, optional) persists a text scale chosen in OS Settings.
+function Monitor.new(net, config, saveConfig)
     assert(type(config.clientId) == "string" and #config.clientId > 0, "Invalid monitor clientId")
     local client = {devices = {}, config = config}
+    -- A per-side scale from OS Settings overrides the shared textScale.
+    local function scaleFor(side)
+        local own = type(config.textScales) == "table" and config.textScales[side]
+        return Monitor.validScale(own) and own or config.textScale
+    end
     local function status(device, text)
         if device.peripheral.setBackgroundColor then device.peripheral.setBackgroundColor(32768) end
         if device.peripheral.setTextColor then device.peripheral.setTextColor(1) end
@@ -19,23 +29,24 @@ function Monitor.new(net, config)
             if peripheral.getType(side) == "monitor" then
                 local device = client.devices[side]
                 local wrapped = peripheral.wrap(side)
-                if not device or device.textScale ~= config.textScale then
+                local scale = scaleFor(side)
+                if not device or device.textScale ~= scale then
                     if wrapped.setBackgroundColor then wrapped.setBackgroundColor(colors.black) end
                     if wrapped.setTextColor then wrapped.setTextColor(colors.white) end
-                    wrapped.setTextScale(config.textScale)
+                    wrapped.setTextScale(scale)
                 end
                 local width, height = wrapped.getSize()
                 if not device then
                     device = {id = config.clientId .. ":" .. side, side = side, peripheral = wrapped,
                         width = width, height = height, nonce = 0, lastAnnounce = -math.huge,
-                        lastServer = 0, connected = false, textScale = config.textScale,
+                        lastServer = 0, connected = false, textScale = scale,
                         colour = (wrapped.isColor or wrapped.isColour) and (wrapped.isColor or wrapped.isColour)() or false}
                     client.devices[side] = device
                     status(device, "Connecting to SmartHome OS...")
                 else
                     local oldColour = device.colour
                     device.peripheral = wrapped
-                    device.textScale = config.textScale
+                    device.textScale = scale
                     device.colour = (wrapped.isColor or wrapped.isColour) and (wrapped.isColor or wrapped.isColour)() or false
                     if oldColour ~= device.colour then device.cache = {} end
                     if width ~= device.width or height ~= device.height then
@@ -90,6 +101,18 @@ function Monitor.new(net, config)
                     device.lastServer = now
                     device.frameId, device.inputRevision = message.frameId, message.inputRevision
                     device.hasFrame = true
+                elseif message.type == "monitorConfig" and device.connected
+                    and message.sender == device.serverId and message.serverSession == device.serverSession
+                    and Monitor.validScale(message.textScale) and message.textScale ~= device.textScale then
+                    local previous = type(config.textScales) == "table" and config.textScales or {}
+                    local scales = {}
+                    for side, value in pairs(previous) do scales[side] = value end
+                    scales[device.side] = message.textScale
+                    config.textScales = scales
+                    if saveConfig and not saveConfig(config) then config.textScales = previous; return end
+                    print("Monitor " .. device.side .. " text scale " .. message.textScale)
+                    client.scan() -- Applies the scale; a changed size is announced on the next tick.
+                    device.lastAnnounce, device.cache = -math.huge, {}
                 end
                 return
             end
@@ -119,7 +142,8 @@ function Monitor.new(net, config)
             if available and now - device.lastAnnounce >= config.announceInterval then
                 device.nonce = device.nonce + 1
                 net.toServer({type = "announce", clientType = "monitor", clientId = device.id,
-                    nonce = device.nonce, width = device.width, height = device.height, touchProtocol = 1})
+                    nonce = device.nonce, width = device.width, height = device.height, touchProtocol = 1,
+                    textScale = device.textScale})
                 device.lastAnnounce = now
             end
         end

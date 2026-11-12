@@ -17,7 +17,7 @@ def lua_string(value):
         equals += "="
     return "[" + equals + "[" + value + "]" + equals + "]"
 
-header = '''-- SmartHome OS installer: bundled-v49
+header = '''-- SmartHome OS installer: bundled-v50
 -- Flat-root layout: lib_*, clients_*, apps_*, configs_*.
 -- Upload this ONE file to Pastebin. All role files are included below.
 -- Usage: inst server|io|monitor|sensor|relay [--startup]
@@ -40,7 +40,7 @@ local args = {...}
 local role, autorun, withApps = args[1], false, false
 local entry = {server = "main_os.lua", io = "clients_io_client.lua", monitor = "clients_monitor_client.lua", sensor = "clients_sensor_client.lua", relay = "clients_relay_client.lua"}
 local commands = {app = true, apps = true, store = true, list = true, remove = true, share = true, backup = true, restore = true}
-print("SmartHome installer: bundled-v49")
+print("SmartHome installer: bundled-v50")
 local roleUsage = "Usage: inst server|io|monitor|sensor|relay [--startup] (server also: --apps)"
 local appUsage = "Usage: inst app NAME [--ref REF] | inst app NAME PASTE_ID | inst app NAME --file PATH"
 if not entry[role] and not commands[role] then

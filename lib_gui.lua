@@ -47,10 +47,30 @@ function Gui.seconds(hundredths)
     return tostring(math.floor(hundredths / 100)) .. "." .. decimal
 end
 
+-- v50 touch assist: old monitors often report a tap one cell off. A tap on
+-- empty space selects a control only if exactly one enabled control touches
+-- that cell's edge. A tap on a disabled control never selects its neighbour.
+Gui.touchAssist = true
+function Gui.nearest(hits, x, y)
+    local found
+    for _, hit in ipairs(hits) do
+        local y1, y2 = hit.y1 or hit.y, hit.y2 or hit.y
+        local dx = x < hit.x1 and hit.x1 - x or x > hit.x2 and x - hit.x2 or 0
+        local dy = y1 and (y < y1 and y1 - y or y > y2 and y - y2) or 0
+        if dx + dy == 0 then return nil end
+        if dx + dy == 1 and hit.enabled ~= false then
+            if found then return nil end
+            found = hit
+        end
+    end
+    return found
+end
 function Gui.actionAt(hits, x, y)
     for _, hit in ipairs(hits) do
         if hit.enabled ~= false and Gui.hit(hit, x, y) then return hit.action, hit.value end
     end
+    local near = Gui.touchAssist and Gui.nearest(hits, x, y)
+    if near then return near.action, near.value end
 end
 
 -- Keep every completed choice visible; shorten long IDs rather than losing

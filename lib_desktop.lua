@@ -123,6 +123,9 @@ function Desktop.layoutOptions(win, app, monitor, selectedGrid)
         options[#options + 1] = {label = "Fullscreen", value = "fullscreen", enabled = Desktop.fullscreen(app, monitor) ~= nil}
         options[#options + 1] = {label = "Resize", value = "custom", enabled = true}
         options[#options + 1] = {label = "Move", value = "move", enabled = true}
+        if (monitor.workspaces or 1) > 1 then
+            options[#options + 1] = {label = "Workspace", value = "workspace", enabled = true}
+        end
     end
     options[#options + 1] = {label = "Cancel", value = "cancel", enabled = true}
     return options
@@ -262,7 +265,10 @@ function Desktop.layoutPicker(win, app, monitor, page, title, selectedGrid)
         action(1, 1, half, "back", "Back")
         action(1, half + 1, width, "cancel", "Cancel")
     elseif width < 22 then
-        action(3, 1, width, "fullscreen", "Fullscreen")
+        if byMode.workspace then
+            action(3, 1, half, "fullscreen", "Full")
+            action(3, half + 1, width, "workspace", "Space")
+        else action(3, 1, width, "fullscreen", "Fullscreen") end
         action(2, 1, half, "restore", "Restore")
         action(2, half + 1, width, "custom", "Resize")
         action(1, 1, half, "move", "Move")
@@ -272,7 +278,10 @@ function Desktop.layoutPicker(win, app, monitor, page, title, selectedGrid)
         action(3, half + 1, width, "restore", "Restore")
         action(2, 1, half, "custom", "Resize")
         action(2, half + 1, width, "move", "Move")
-        action(1, 1, width, "cancel", "Cancel")
+        if byMode.workspace then
+            action(1, 1, half, "workspace", "Workspace")
+            action(1, half + 1, width, "cancel", "Cancel")
+        else action(1, 1, width, "cancel", "Cancel") end
     end
     ui.finish(true)
     for _, hit in ipairs(ui.hits) do
@@ -282,8 +291,13 @@ function Desktop.layoutPicker(win, app, monitor, page, title, selectedGrid)
     return rect, ui.lines, ui.hits, page, pages
 end
 
+-- Workspace colours, in order. Workspace 1 is red.
+Desktop.workspaceColours = {16384, 2, 16, 32, 512, 2048, 1024, 4, 1}
 -- Returns a complete taskbar line and exact touch regions, with stable window order.
-function Desktop.taskbar(windows, monitor, clock, saved, active)
+-- shell (v50, optional): {workspaces = count, current = n, occupied = {[n] = true},
+-- layout = "classic" | "centered"}. Without it the bar is the classic one:
+-- launcher left, windows, clock right. Workspace hits carry fg/bg/label paint.
+function Desktop.taskbar(windows, monitor, clock, saved, active, shell)
     local visible={}; for _,win in ipairs(windows) do if not win.hideTaskbar then visible[#visible+1]=win end end; windows=visible
     local width = monitor.width
     local line, hits = string.rep(" ", width), {}
@@ -291,12 +305,45 @@ function Desktop.taskbar(windows, monitor, clock, saved, active)
         label = label:sub(1, math.max(0, math.min(stop or width, width) - x + 1))
         line = line:sub(1, x - 1) .. label .. line:sub(x + #label)
     end
-    local function hit(x1, x2, action, id) hits[#hits + 1] = {x1 = x1, x2 = x2, action = action, id = id} end
-    put(1, "[+]"); hit(1, math.min(3, width), "launcher")
-    local clockWidth = (width >= 22 or (#windows == 0 and width >= 10)) and 6 or 0
-    if clockWidth > 0 then put(width - 4, clock); hit(width - 4, width, "inbox") end
-    local first, last = 5, width - clockWidth
-    if last < first then return line, hits end
+    local function hit(x1, x2, action, id)
+        hits[#hits + 1] = {x1 = x1, x2 = x2, action = action, id = id}
+        return hits[#hits]
+    end
+    local x = 1
+    local count = shell and shell.workspaces or 1
+    if count > 1 then
+        -- Coloured strokes instead of numbers: a solid block is the current
+        -- workspace, "=" has windows, "-" is empty.
+        local cell = width >= count * 3 + 30 and 2 or 1
+        local gap = cell == 2 and 1 or 0
+        for n = 1, count do
+            if x + cell - 1 > width - 4 then break end
+            local colour = Desktop.workspaceColours[(n - 1) % #Desktop.workspaceColours + 1]
+            local current = n == shell.current
+            local mark = current and " " or shell.occupied and shell.occupied[n] and "=" or "-"
+            put(x, mark:rep(cell))
+            local item = hit(x, x + cell - 1, "workspace", n)
+            if current then item.bg, item.fg = colour, Gui.contrast(colour) else item.fg = colour end
+            x = x + cell + gap
+        end
+        if gap == 0 then x = x + 1 end
+    end
+    local launcher = x
+    put(launcher, "[+]"); hit(launcher, math.min(launcher + 2, width), "launcher")
+    local clockWidth = (width >= 22 or (#windows == 0 and width >= 10)) and width - 4 > launcher + 3 and 6 or 0
+    local segments
+    local centred = shell and shell.layout == "centered" and math.floor((width - 5) / 2) + 1
+    if clockWidth > 0 and centred and centred > launcher + 4 then
+        put(centred, clock); hit(centred, centred + 4, "inbox")
+        segments = {{launcher + 4, centred - 2}, {centred + 7, width}}
+    else
+        if clockWidth > 0 then put(width - 4, clock); hit(width - 4, width, "inbox") end
+        segments = {{launcher + 4, width - clockWidth}}
+    end
+    local usable = {}
+    for _, segment in ipairs(segments) do if segment[2] >= segment[1] then usable[#usable + 1] = segment end end
+    segments = usable
+    if #segments == 0 then return line, hits end
     local labels, needed = {}, 0
     for _, win in ipairs(windows) do
         local marker = win.minimized and "_" or win.id == active and "*" or ""
@@ -305,27 +352,46 @@ function Desktop.taskbar(windows, monitor, clock, saved, active)
         labels[#labels + 1] = label
         needed = needed + #labels[#labels] + 1
     end
-    local overflow = needed > last - first + 2
+    local capacity = 0
+    for _, segment in ipairs(segments) do capacity = capacity + segment[2] - segment[1] + 2 end
+    local overflow = needed > capacity
+    -- Labels are never split around a centred clock, so the second part may
+    -- start with room left in the first: check the real placement as well.
+    if not overflow and #segments > 1 then
+        local index = 1
+        for _, segment in ipairs(segments) do
+            local at = segment[1]
+            while labels[index] and at + #labels[index] - 1 <= segment[2] do at, index = at + #labels[index] + 1, index + 1 end
+        end
+        overflow = index <= #labels
+    end
     local scroll = tonumber(saved.scroll) or 1
     if scroll ~= scroll then scroll = 1 end
     saved.scroll = clamp(math.floor(scroll), 1, math.max(1, #windows))
     if not overflow then saved.scroll = 1 end
+    local first, last = segments[1], segments[#segments]
     if overflow then
-        if saved.scroll > 1 then put(first, "<"); hit(first, first, "previous") end
-        first, last = first + 1, last - 1
+        if saved.scroll > 1 then put(first[1], "<"); hit(first[1], first[1], "previous") end
+        first[1], last[2] = first[1] + 1, last[2] - 1
     end
-    local x, finalVisible = first, saved.scroll - 1
-    for index = saved.scroll, #windows do
-        local available = last - x + 1
-        if available < 3 then break end
-        local label = labels[index]
-        local limit = math.min(14, available)
-        if #label > limit then label = label:sub(1, limit - 1) .. " " end
-        put(x, label, last); hit(x, x + #label - 1, "window", windows[index].id)
-        x, finalVisible = x + #label + 1, index
+    local index, finalVisible = saved.scroll, saved.scroll - 1
+    for number, segment in ipairs(segments) do
+        local at = segment[1]
+        while index <= #windows do
+            local available = segment[2] - at + 1
+            if available < 3 then break end
+            local label = labels[index]
+            local limit = math.min(14, available)
+            if #label > limit then
+                if number < #segments then break end
+                label = label:sub(1, limit - 1) .. " "
+            end
+            put(at, label, segment[2]); hit(at, at + #label - 1, "window", windows[index].id)
+            at, finalVisible, index = at + #label + 1, index, index + 1
+        end
     end
     if overflow and finalVisible < #windows then
-        put(last + 1, ">"); hit(last + 1, last + 1, "next")
+        put(last[2] + 1, ">"); hit(last[2] + 1, last[2] + 1, "next")
     end
     return line, hits
 end
@@ -333,7 +399,7 @@ end
 -- Shared paginated popup geometry for the launcher and window layout menus.
 function Desktop.menu(monitor, title, items, page, anchor)
     local area = Desktop.area(monitor)
-    local columns = not anchor and area.width >= 45 and #items >= 6 and 2 or 1
+    local columns = (not anchor or anchor.wide) and area.width >= 45 and #items >= 6 and 2 or 1
     local width = math.min(area.width, columns == 2 and 56 or area.width >= 52 and 32 or 26)
     local depth = math.min(4, Gui.controlHeight(area.height))
     local rows = math.max(1, math.floor((area.height - 1) / depth))

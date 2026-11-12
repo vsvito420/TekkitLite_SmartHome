@@ -6,7 +6,11 @@ A central ComputerCraft computer owns apps, saved state and output decisions. Re
 
 This repair targets Lua 5.1 and the channel-based modem API available in ComputerCraft 1.5. It uses serialized **strings** on the wire and no CC:Tweaked-only APIs. It has been tested with simulated ComputerCraft APIs, **not inside the Minecraft server**.
 
-## Quick start (v49)
+## Updating to v50
+
+The desktop gains workspaces, an optional top bar with a centred clock, touch assist and a remote text scale for monitors. Everything is off until you choose it: **Settings → Appearance → Desktop → Preset: Tiling bar** switches to the top bar with four workspaces. Update the central computer and the monitor computers. See [the v50 notes](documentation_update_v50.md).
+
+## Quick start (v50)
 
 Upload `install.lua` to Pastebin once. Then, with `CODE` as your paste ID:
 
@@ -17,7 +21,7 @@ inst io --startup             (IO computers, then reboot)
 inst server --startup --apps  (central computer, then reboot)
 ```
 
-`inst store` picks single apps from a list, `inst apps` reloads all of them, and `inst backup` / `inst restore CODE` move a computer's settings through Pastebin. The new [Net Scope](documentation_net_scope.md) app shows live network packets. See [all v49 commands](documentation_update_v49.md).
+`inst store` picks single apps from a list, `inst apps` reloads all of them, and `inst backup` / `inst restore CODE` move a computer's settings through Pastebin. The new [Net Scope](documentation_net_scope.md) app shows live network packets. See [all installer commands](documentation_update_v49.md).
 
 ## Updating to v48
 
